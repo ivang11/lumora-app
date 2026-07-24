@@ -1,0 +1,39 @@
+{
+  "expo": {
+    "name": "Lumora",
+    "slug": "lumora-app",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/lumora-icon.png",
+    "scheme": "lumora",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "bundleIdentifier": "com.ivangb.lumora",
+      "icon": "./assets/images/lumora-icon.png"
+    },
+    "android": {
+      "package": "com.ivangb.lumora",
+      "predictiveBackGestureEnabled": false
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/lumora-favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#0e0e12",
+          "image": "./assets/images/lumora-logo.png",
+          "imageWidth": 280
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

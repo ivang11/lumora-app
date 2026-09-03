@@ -1,5 +1,5 @@
-import { env, hasTmdbConfiguration } from '@/config/env';
-import { HttpError } from '@/api/httpError';
+import { env, hasTmdbConfiguration } from "@/config/env";
+import { HttpError } from "@/api/httpError";
 
 export async function tmdbRequest<T>(
   path: string,
@@ -7,13 +7,13 @@ export async function tmdbRequest<T>(
 ): Promise<T> {
   if (!hasTmdbConfiguration) {
     throw new Error(
-      'Falta configurar EXPO_PUBLIC_TMDB_API_URL, EXPO_PUBLIC_TMDB_IMAGE_URL o EXPO_PUBLIC_TMDB_API_KEY.',
+      "Falta configurar EXPO_PUBLIC_TMDB_API_URL, EXPO_PUBLIC_TMDB_IMAGE_URL o EXPO_PUBLIC_TMDB_API_KEY.",
     );
   }
 
-  const url = new URL(`${env.tmdbApiUrl}/${path.replace(/^\/+/, '')}`);
-  url.searchParams.set('api_key', env.tmdbApiKey);
-  url.searchParams.set('language', 'es-ES');
+  const url = new URL(`${env.tmdbApiUrl}/${path.replace(/^\/+/, "")}`);
+  url.searchParams.set("api_key", env.tmdbApiKey);
+  url.searchParams.set("language", "es-ES");
 
   for (const [key, value] of Object.entries(params)) {
     if (value !== undefined) {
@@ -21,13 +21,24 @@ export async function tmdbRequest<T>(
     }
   }
 
-  const response = await fetch(url);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  let response: Response;
+
+  try {
+    response = await fetch(url, { signal: controller.signal });
+  } finally {
+    clearTimeout(timeout);
+  }
   const payload = (await response.json().catch(() => null)) as {
     status_message?: string;
   } | null;
 
   if (!response.ok) {
-    throw new HttpError(payload?.status_message ?? 'TMDB no está disponible.', response.status);
+    throw new HttpError(
+      payload?.status_message ?? "TMDB no está disponible.",
+      response.status,
+    );
   }
 
   return payload as T;

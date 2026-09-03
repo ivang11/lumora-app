@@ -1,7 +1,7 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'expo-router';
-import { useEffect, useState, type ComponentProps } from 'react';
+import { Ionicons } from "@expo/vector-icons";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Link } from "expo-router";
+import { useEffect, useState, type ComponentProps } from "react";
 import {
   ActivityIndicator,
   Animated,
@@ -10,60 +10,62 @@ import {
   Pressable,
   StyleSheet,
   View,
-} from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+} from "react-native";
+import { useSafeAreaInsets } from "react-native-safe-area-context";
 
-import { apiRequest } from '@/api/lumora/client';
-import { AppText } from '@/components/ui/AppText';
-import { useAuthStore } from '@/stores/authStore';
-import { colors, radii, spacing } from '@/theme/tokens';
-import type { ApiMediaType, WatchStatus } from '@/types/api';
+import { apiRequest } from "@/api/lumora/client";
+import { AppText } from "@/components/ui/AppText";
+import {
+  emptyMediaState,
+  mediaStateKey,
+  mediaStateQueryOptions,
+  type MediaActionState,
+  type MediaUserState,
+} from "@/features/media/mediaQueries";
+import { useAuthStore } from "@/stores/authStore";
+import { colors, radii, spacing } from "@/theme/tokens";
+import type { ApiMediaType, WatchStatus } from "@/types/api";
 
 interface MediaActionsProps {
   id: string;
   type: ApiMediaType;
 }
 
-interface WatchResponse {
-  id?: number;
-  status?: number;
-}
-
 interface StatusOption {
   type: WatchStatus;
   status: number;
   label: string;
-  icon: ComponentProps<typeof Ionicons>['name'];
+  icon: ComponentProps<typeof Ionicons>["name"];
   color: string;
 }
 
 const allOptions: StatusOption[] = [
   {
-    type: 'seen',
+    type: "seen",
     status: 1,
-    label: 'Visto',
-    icon: 'checkmark-circle-outline',
+    label: "Visto",
+    icon: "checkmark-circle-outline",
     color: colors.success,
   },
   {
-    type: 'pending',
+    type: "pending",
     status: 2,
-    label: 'Pendiente',
-    icon: 'time-outline',
+    label: "Pendiente",
+    icon: "time-outline",
     color: colors.warning,
   },
   {
-    type: 'follow',
+    type: "follow",
     status: 3,
-    label: 'Siguiendo',
-    icon: 'notifications-outline',
+    label: "Siguiendo",
+    icon: "notifications-outline",
     color: colors.primary,
   },
   {
-    type: 'filed',
+    type: "filed",
     status: 4,
-    label: 'Abandonada',
-    icon: 'archive-outline',
+    label: "Abandonada",
+    icon: "archive-outline",
     color: colors.textSecondary,
   },
 ];
@@ -72,52 +74,89 @@ export function MediaActions({ id, type }: MediaActionsProps) {
   const [sheetOpen, setSheetOpen] = useState(false);
   const [sheetAnimation] = useState(() => new Animated.Value(0));
   const token = useAuthStore((state) => state.token);
+  const userId = useAuthStore((state) => state.user?.id ?? null);
   const queryClient = useQueryClient();
   const insets = useSafeAreaInsets();
-  const watchKey = ['lumora', 'watch', type, id];
-  const favoriteKey = ['lumora', 'favorite', type, id];
+  const stateKey = mediaStateKey(type, id, userId);
 
-  const watch = useQuery({
-    queryKey: watchKey,
-    queryFn: () =>
-      apiRequest<WatchResponse | null>(`/user/watch/${type}/${id}`, { token }),
-    enabled: Boolean(token),
-  });
-  const favorite = useQuery({
-    queryKey: favoriteKey,
-    queryFn: () =>
-      apiRequest<WatchResponse | null>(`/user/favorite/${type}/${id}`, { token }),
-    enabled: Boolean(token),
-  });
+  const mediaState = useQuery(mediaStateQueryOptions(type, id, token, userId));
 
   const refreshCollections = () => {
-    void queryClient.invalidateQueries({ queryKey: ['lumora', 'collection'] });
-    void queryClient.invalidateQueries({ queryKey: ['lumora', 'following'] });
-    void queryClient.invalidateQueries({ queryKey: ['lumora', 'user', 'stats'] });
+    void queryClient.invalidateQueries({ queryKey: ["lumora", "collection"] });
+    void queryClient.invalidateQueries({ queryKey: ["lumora", "following"] });
+    void queryClient.invalidateQueries({
+      queryKey: ["lumora", "user", "stats"],
+    });
   };
 
   const toggleWatch = useMutation({
     mutationFn: (status: WatchStatus) =>
-      apiRequest<WatchResponse | null>(`/${type}/${id}/watch`, {
-        method: 'POST',
+      apiRequest<MediaActionState | null>(`/${type}/${id}/watch`, {
+        method: "POST",
         token,
         body: { type: status },
       }),
+    onMutate: async (status) => {
+      await queryClient.cancelQueries({ queryKey: stateKey });
+      const previous = queryClient.getQueryData<MediaUserState>(stateKey);
+      const selectedStatus = allOptions.find(
+        (option) => option.type === status,
+      )?.status;
+      const optimistic: MediaActionState | null =
+        previous?.watchlist?.status === selectedStatus
+          ? null
+          : { status: selectedStatus };
+
+      queryClient.setQueryData<MediaUserState>(stateKey, {
+        ...(previous ?? emptyMediaState()),
+        watchlist: optimistic,
+      });
+
+      return { previous };
+    },
+    onError: (_error, _status, context) => {
+      queryClient.setQueryData(stateKey, context?.previous);
+    },
     onSuccess: (data) => {
-      queryClient.setQueryData(watchKey, data);
+      queryClient.setQueryData<MediaUserState>(stateKey, (current) => ({
+        ...(current ?? emptyMediaState()),
+        watchlist: data,
+      }));
       refreshCollections();
     },
   });
 
   const toggleFavorite = useMutation({
     mutationFn: () =>
-      apiRequest<WatchResponse | null>(`/${type}/${id}/favorite`, {
-        method: 'POST',
+      apiRequest<MediaActionState | null>(`/${type}/${id}/favorite`, {
+        method: "POST",
         token,
       }),
+    onMutate: async () => {
+      await queryClient.cancelQueries({ queryKey: stateKey });
+      const previous = queryClient.getQueryData<MediaUserState>(stateKey);
+      const optimistic: MediaActionState | null = previous?.favorite?.id
+        ? null
+        : { id: -1 };
+
+      queryClient.setQueryData<MediaUserState>(stateKey, {
+        ...(previous ?? emptyMediaState()),
+        favorite: optimistic,
+      });
+
+      return { previous };
+    },
+    onError: (_error, _variables, context) => {
+      queryClient.setQueryData(stateKey, context?.previous);
+    },
     onSuccess: (data) => {
-      queryClient.setQueryData(favoriteKey, data);
-      void queryClient.invalidateQueries({ queryKey: ['lumora', 'collection'] });
+      queryClient.setQueryData<MediaUserState>(stateKey, (current) => ({
+        ...(current ?? emptyMediaState()),
+        favorite: data,
+      }));
+      void queryClient.invalidateQueries({
+        queryKey: ["lumora", "collection"],
+      });
     },
   });
 
@@ -146,16 +185,19 @@ export function MediaActions({ id, type }: MediaActionsProps) {
   }
 
   const options =
-    type === 'show'
+    type === "show"
       ? allOptions
       : allOptions.filter(
-          (option) => option.type === 'seen' || option.type === 'pending',
+          (option) => option.type === "seen" || option.type === "pending",
         );
   const activeOption = options.find(
-    (option) => option.status === watch.data?.status,
+    (option) => option.status === mediaState.data?.watchlist?.status,
   );
-  const watchLoading = watch.isLoading || toggleWatch.isPending;
-  const favoriteActive = Boolean(favorite.data?.id);
+  const watchLoading = mediaState.isLoading;
+  const watchBusy = watchLoading || toggleWatch.isPending;
+  const favoriteActive = Boolean(mediaState.data?.favorite?.id);
+  const favoriteLoading = mediaState.isLoading;
+  const favoriteBusy = favoriteLoading || toggleFavorite.isPending;
 
   const closeSheet = () => {
     Animated.timing(sheetAnimation, {
@@ -179,7 +221,7 @@ export function MediaActions({ id, type }: MediaActionsProps) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Cambiar estado de colección"
-          disabled={watchLoading}
+          disabled={watchBusy}
           onPress={() => setSheetOpen(true)}
           style={({ pressed }) => [
             styles.statusButton,
@@ -188,8 +230,9 @@ export function MediaActions({ id, type }: MediaActionsProps) {
               backgroundColor: colors.surfaceElevated,
             },
             pressed && styles.pressed,
-            watchLoading && styles.disabled,
-          ]}>
+            watchBusy && styles.disabled,
+          ]}
+        >
           {watchLoading ? (
             <ActivityIndicator
               size="small"
@@ -197,15 +240,16 @@ export function MediaActions({ id, type }: MediaActionsProps) {
             />
           ) : (
             <Ionicons
-              name={activeOption?.icon ?? 'add'}
+              name={activeOption?.icon ?? "add"}
               size={18}
               color={activeOption?.color ?? colors.textSecondary}
             />
           )}
           <AppText
             variant="caption"
-            style={activeOption ? { color: activeOption.color } : undefined}>
-            {activeOption?.label ?? 'Añadir'}
+            style={activeOption ? { color: activeOption.color } : undefined}
+          >
+            {activeOption?.label ?? "Añadir"}
           </AppText>
           <Ionicons
             name="chevron-down"
@@ -217,22 +261,23 @@ export function MediaActions({ id, type }: MediaActionsProps) {
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={
-            favoriteActive ? 'Quitar de favoritas' : 'Añadir a favoritas'
+            favoriteActive ? "Quitar de favoritas" : "Añadir a favoritas"
           }
           accessibilityState={{ selected: favoriteActive }}
-          disabled={favorite.isLoading || toggleFavorite.isPending}
+          disabled={favoriteBusy}
           onPress={() => toggleFavorite.mutate()}
           style={({ pressed }) => [
             styles.favorite,
             favoriteActive && styles.favoriteActive,
             pressed && styles.pressed,
-            (favorite.isLoading || toggleFavorite.isPending) && styles.disabled,
-          ]}>
-          {favorite.isLoading || toggleFavorite.isPending ? (
+            favoriteBusy && styles.disabled,
+          ]}
+        >
+          {favoriteLoading ? (
             <ActivityIndicator size="small" color={colors.favorite} />
           ) : (
             <Ionicons
-              name={favoriteActive ? 'heart' : 'heart-outline'}
+              name={favoriteActive ? "heart" : "heart-outline"}
               size={20}
               color={favoriteActive ? colors.favorite : colors.textMuted}
             />
@@ -251,7 +296,8 @@ export function MediaActions({ id, type }: MediaActionsProps) {
         onRequestClose={closeSheet}
         presentationStyle="overFullScreen"
         transparent
-        visible={sheetOpen}>
+        visible={sheetOpen}
+      >
         <View style={styles.modal}>
           <Animated.View
             pointerEvents="none"
@@ -280,7 +326,8 @@ export function MediaActions({ id, type }: MediaActionsProps) {
                   },
                 ],
               },
-            ]}>
+            ]}
+          >
             <View style={styles.handle} />
             <View style={styles.sheetHeading}>
               <AppText variant="heading">Estado</AppText>
@@ -290,7 +337,8 @@ export function MediaActions({ id, type }: MediaActionsProps) {
             </View>
 
             {options.map((option) => {
-              const active = option.status === watch.data?.status;
+              const active =
+                option.status === mediaState.data?.watchlist?.status;
               return (
                 <Pressable
                   key={option.type}
@@ -300,7 +348,8 @@ export function MediaActions({ id, type }: MediaActionsProps) {
                   style={({ pressed }) => [
                     styles.option,
                     pressed && styles.optionPressed,
-                  ]}>
+                  ]}
+                >
                   <View
                     style={[
                       styles.optionIcon,
@@ -308,7 +357,8 @@ export function MediaActions({ id, type }: MediaActionsProps) {
                         borderColor: option.color,
                         backgroundColor: option.color,
                       },
-                    ]}>
+                    ]}
+                  >
                     <Ionicons
                       name={option.icon}
                       size={20}
@@ -317,7 +367,8 @@ export function MediaActions({ id, type }: MediaActionsProps) {
                   </View>
                   <AppText
                     variant="label"
-                    style={active ? { color: option.color } : undefined}>
+                    style={active ? { color: option.color } : undefined}
+                  >
                     {option.label}
                   </AppText>
                   {active ? (
@@ -340,8 +391,8 @@ export function MediaActions({ id, type }: MediaActionsProps) {
 
 const styles = StyleSheet.create({
   container: {
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: spacing.sm,
   },
   statusButton: {
@@ -351,9 +402,9 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surfaceElevated,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: spacing.sm,
   },
   favorite: {
@@ -363,12 +414,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   favoriteActive: {
     borderColor: colors.favorite,
-    backgroundColor: 'rgba(224, 80, 80, 0.14)',
+    backgroundColor: "rgba(224, 80, 80, 0.14)",
   },
   pressed: {
     opacity: 0.7,
@@ -384,18 +435,18 @@ const styles = StyleSheet.create({
     minHeight: 48,
     borderRadius: radii.md,
     backgroundColor: colors.primary,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   loginText: {
     color: colors.black,
   },
   modal: {
     flex: 1,
-    justifyContent: 'flex-end',
+    justifyContent: "flex-end",
   },
   backdrop: {
-    backgroundColor: 'rgba(0, 0, 0, 0.58)',
+    backgroundColor: "rgba(0, 0, 0, 0.58)",
   },
   sheet: {
     borderTopLeftRadius: radii.lg,
@@ -404,10 +455,10 @@ const styles = StyleSheet.create({
     borderBottomWidth: 0,
     borderColor: colors.border,
     backgroundColor: colors.surface,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   handle: {
-    alignSelf: 'center',
+    alignSelf: "center",
     width: 38,
     height: 4,
     marginTop: spacing.md,
@@ -425,8 +476,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: spacing.lg,
     borderTopWidth: 1,
     borderColor: colors.border,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: spacing.md,
   },
   optionPressed: {
@@ -439,10 +490,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surfaceElevated,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
   },
   optionCheck: {
-    marginLeft: 'auto',
+    marginLeft: "auto",
   },
 });

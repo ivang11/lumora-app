@@ -1,28 +1,30 @@
-import { Ionicons } from '@expo/vector-icons';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Image } from 'expo-image';
-import { Link } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { Ionicons } from "@expo/vector-icons";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Image } from "expo-image";
+import { Link } from "expo-router";
+import { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Pressable,
   ScrollView,
   StyleSheet,
   View,
-} from 'react-native';
+} from "react-native";
 
-import { apiRequest } from '@/api/lumora/client';
-import { tmdbMediaApi } from '@/api/tmdb/media';
-import { AppText } from '@/components/ui/AppText';
-import { useAuthStore } from '@/stores/authStore';
-import { colors, radii, spacing } from '@/theme/tokens';
-import type {
-  Episode,
-  SeasonSummary,
-  ShowProgress,
-  WatchedEpisode,
-} from '@/types/media';
-import { tmdbImage } from '@/utils/media';
+import { apiRequest } from "@/api/lumora/client";
+import { tmdbMediaApi } from "@/api/tmdb/media";
+import { AppText } from "@/components/ui/AppText";
+import {
+  emptyMediaState,
+  mediaStateKey,
+  mediaStateQueryOptions,
+  type EpisodeWatchMutationResponse,
+  type MediaUserState,
+} from "@/features/media/mediaQueries";
+import { useAuthStore } from "@/stores/authStore";
+import { colors, radii, spacing } from "@/theme/tokens";
+import type { Episode, SeasonSummary } from "@/types/media";
+import { tmdbImage } from "@/utils/media";
 
 interface EpisodesSectionProps {
   showId: string;
@@ -32,6 +34,7 @@ interface EpisodesSectionProps {
 interface EpisodeMutationInput {
   episode: Episode;
   seasonNumber: number;
+  watched: boolean;
 }
 
 export function EpisodesSection({ showId, seasons }: EpisodesSectionProps) {
@@ -43,72 +46,143 @@ export function EpisodesSection({ showId, seasons }: EpisodesSectionProps) {
     regularSeasons.at(-1)?.season_number ?? 1,
   );
   const token = useAuthStore((state) => state.token);
+  const userId = useAuthStore((state) => state.user?.id ?? null);
   const queryClient = useQueryClient();
   const activeSeason = regularSeasons.find(
     (season) => season.season_number === activeSeasonNumber,
   );
 
   const season = useQuery({
-    queryKey: ['tmdb', 'tv', showId, 'season', activeSeasonNumber],
+    queryKey: ["tmdb", "tv", showId, "season", activeSeasonNumber],
     queryFn: () => tmdbMediaApi.season(showId, activeSeasonNumber),
   });
-  const watched = useQuery({
-    queryKey: ['lumora', 'tv', showId, 'season', activeSeasonNumber, 'watched'],
-    queryFn: () =>
-      apiRequest<WatchedEpisode[]>(
-        `/user/watch/show/${showId}/season/${activeSeasonNumber}`,
-        { token },
-      ),
-    enabled: Boolean(token),
-    retry: false,
-  });
-  const progress = useQuery({
-    queryKey: ['lumora', 'tv', showId, 'progress'],
-    queryFn: () =>
-      apiRequest<ShowProgress>(`/user/watch/show/${showId}/progress`, {
-        token,
-      }),
-    enabled: Boolean(token),
-  });
+  const stateKey = mediaStateKey("show", showId, userId);
+  const mediaState = useQuery(
+    mediaStateQueryOptions("show", showId, token, userId),
+  );
 
-  const invalidateProgress = async () => {
-    await Promise.all([
-      queryClient.invalidateQueries({
-        queryKey: ['lumora', 'tv', showId, 'season', activeSeasonNumber, 'watched'],
-      }),
-      queryClient.invalidateQueries({
-        queryKey: ['lumora', 'tv', showId, 'progress'],
-      }),
-      queryClient.invalidateQueries({ queryKey: ['lumora', 'following'] }),
-    ]);
+  const refreshCollections = () => {
+    void queryClient.invalidateQueries({ queryKey: ["lumora", "following"] });
+    void queryClient.invalidateQueries({
+      queryKey: ["lumora", "user", "stats"],
+    });
   };
 
   const toggleEpisode = useMutation({
-    mutationFn: ({ episode, seasonNumber }: EpisodeMutationInput) =>
-      apiRequest(`/episode/${episode.id}`, {
-        method: 'POST',
-        token,
-        body: {
-          show_id: Number(showId),
-          season_number: seasonNumber,
-          episode_number: episode.episode_number,
+    mutationFn: ({ episode, seasonNumber, watched }: EpisodeMutationInput) =>
+      apiRequest<EpisodeWatchMutationResponse>(
+        `/show/${showId}/episodes/${episode.id}/watched`,
+        {
+          method: "PUT",
+          token,
+          body: {
+            watched,
+            season_number: seasonNumber,
+            episode_number: episode.episode_number,
+          },
         },
-      }),
-    onSuccess: invalidateProgress,
+      ),
+    onMutate: async ({ episode, watched }) => {
+      await queryClient.cancelQueries({ queryKey: stateKey });
+      const previous = queryClient.getQueryData<MediaUserState>(stateKey);
+      const current = previous ?? emptyMediaState();
+      const watchedEpisodeIds = watched
+        ? [...new Set([...current.watched_episode_ids, episode.id])]
+        : current.watched_episode_ids.filter((id) => id !== episode.id);
+      const watchedCount = Math.max(
+        0,
+        (current.progress?.watched ?? current.watched_episode_ids.length) +
+          (watched ? 1 : -1),
+      );
+      const total = current.progress?.total ?? 0;
+
+      queryClient.setQueryData<MediaUserState>(stateKey, {
+        ...current,
+        watched_episode_ids: watchedEpisodeIds,
+        progress: {
+          watched: watchedCount,
+          total,
+          percentage: total ? Math.round((watchedCount / total) * 100) : 0,
+        },
+      });
+
+      return { previous };
+    },
+    onError: (_error, _variables, context) => {
+      if (context) {
+        queryClient.setQueryData(stateKey, context.previous);
+      }
+    },
+    onSuccess: (response) => {
+      queryClient.setQueryData<MediaUserState>(stateKey, (current) => ({
+        ...(current ?? emptyMediaState()),
+        watched_episode_ids: response.watched_episode_ids,
+        progress: response.progress,
+      }));
+      refreshCollections();
+    },
   });
 
   const toggleSeason = useMutation({
-    mutationFn: () =>
-      apiRequest(`/season/${activeSeason?.id}/watched`, {
-        method: 'POST',
-        token,
-      }),
-    onSuccess: invalidateProgress,
+    mutationFn: ({ watched }: { watched: boolean }) =>
+      apiRequest<EpisodeWatchMutationResponse>(
+        `/show/${showId}/seasons/${activeSeasonNumber}/watched`,
+        {
+          method: "PUT",
+          token,
+          body: {
+            watched,
+            episodes: (season.data?.episodes ?? []).map((episode) => ({
+              id: episode.id,
+              episode_number: episode.episode_number,
+            })),
+          },
+        },
+      ),
+    onMutate: async ({ watched }) => {
+      await queryClient.cancelQueries({ queryKey: stateKey });
+      const previous = queryClient.getQueryData<MediaUserState>(stateKey);
+      const current = previous ?? emptyMediaState();
+      const seasonIds = new Set(
+        (season.data?.episodes ?? []).map((episode) => episode.id),
+      );
+      const watchedEpisodeIds = watched
+        ? [...new Set([...current.watched_episode_ids, ...seasonIds])]
+        : current.watched_episode_ids.filter((id) => !seasonIds.has(id));
+      const total = current.progress?.total ?? 0;
+
+      queryClient.setQueryData<MediaUserState>(stateKey, {
+        ...current,
+        watched_episode_ids: watchedEpisodeIds,
+        progress: {
+          watched: watchedEpisodeIds.length,
+          total,
+          percentage: total
+            ? Math.round((watchedEpisodeIds.length / total) * 100)
+            : 0,
+        },
+      });
+
+      return { previous };
+    },
+    onError: (_error, _variables, context) => {
+      if (context) {
+        queryClient.setQueryData(stateKey, context.previous);
+      }
+    },
+    onSuccess: (response) => {
+      queryClient.setQueryData<MediaUserState>(stateKey, (current) => ({
+        ...(current ?? emptyMediaState()),
+        watched_episode_ids: response.watched_episode_ids,
+        progress: response.progress,
+      }));
+      refreshCollections();
+    },
   });
 
   const watchedIds = useMemo(
-    () => new Set((watched.data ?? []).map((item) => item.episode_id)),
-    [watched.data],
+    () => new Set(mediaState.data?.watched_episode_ids ?? []),
+    [mediaState.data?.watched_episode_ids],
   );
   const allWatched =
     Boolean(season.data?.episodes.length) &&
@@ -119,10 +193,11 @@ export function EpisodesSection({ showId, seasons }: EpisodesSectionProps) {
       <View style={styles.headingRow}>
         <View style={styles.headingText}>
           <AppText variant="heading">Episodios</AppText>
-          {token && progress.data ? (
+          {token && mediaState.data?.progress ? (
             <AppText variant="caption" muted>
-              {progress.data.watched} de {progress.data.total} vistos ·{' '}
-              {progress.data.percentage}%
+              {mediaState.data.progress.watched} de{" "}
+              {mediaState.data.progress.total} vistos ·{" "}
+              {mediaState.data.progress.percentage}%
             </AppText>
           ) : null}
         </View>
@@ -137,12 +212,14 @@ export function EpisodesSection({ showId, seasons }: EpisodesSectionProps) {
         ) : null}
       </View>
 
-      {token && progress.data ? (
+      {token && mediaState.data?.progress ? (
         <View style={styles.progressTrack}>
           <View
             style={[
               styles.progressBar,
-              { width: `${Math.min(progress.data.percentage, 100)}%` },
+              {
+                width: `${Math.min(mediaState.data.progress.percentage, 100)}%`,
+              },
             ]}
           />
         </View>
@@ -151,7 +228,8 @@ export function EpisodesSection({ showId, seasons }: EpisodesSectionProps) {
       <ScrollView
         horizontal
         showsHorizontalScrollIndicator={false}
-        contentContainerStyle={styles.seasonSelector}>
+        contentContainerStyle={styles.seasonSelector}
+      >
         {regularSeasons
           .slice()
           .reverse()
@@ -165,10 +243,12 @@ export function EpisodesSection({ showId, seasons }: EpisodesSectionProps) {
                   styles.seasonPill,
                   active && styles.seasonPillActive,
                   pressed && styles.pressed,
-                ]}>
+                ]}
+              >
                 <AppText
                   variant="caption"
-                  style={active ? styles.seasonTextActive : undefined}>
+                  style={active ? styles.seasonTextActive : undefined}
+                >
                   T{seasonItem.season_number}
                 </AppText>
               </Pressable>
@@ -179,18 +259,19 @@ export function EpisodesSection({ showId, seasons }: EpisodesSectionProps) {
       {token && activeSeason ? (
         <Pressable
           disabled={toggleSeason.isPending}
-          onPress={() => toggleSeason.mutate()}
+          onPress={() => toggleSeason.mutate({ watched: !allWatched })}
           style={({ pressed }) => [
             styles.seasonAction,
             pressed && styles.pressed,
-          ]}>
+          ]}
+        >
           <Ionicons
-            name={allWatched ? 'checkmark-circle' : 'checkmark-circle-outline'}
+            name={allWatched ? "checkmark-circle" : "checkmark-circle-outline"}
             size={20}
             color={allWatched ? colors.success : colors.textSecondary}
           />
           <AppText variant="label">
-            {allWatched ? 'Desmarcar temporada' : 'Marcar temporada completa'}
+            {allWatched ? "Desmarcar temporada" : "Marcar temporada completa"}
           </AppText>
         </Pressable>
       ) : null}
@@ -209,6 +290,7 @@ export function EpisodesSection({ showId, seasons }: EpisodesSectionProps) {
                 toggleEpisode.mutate({
                   episode,
                   seasonNumber: activeSeasonNumber,
+                  watched: !watchedIds.has(episode.id),
                 })
               }
             />
@@ -230,7 +312,7 @@ function EpisodeRow({
   disabled: boolean;
   onPress: () => void;
 }) {
-  const image = tmdbImage(episode.still_path, 'w500');
+  const image = tmdbImage(episode.still_path, "w500");
 
   return (
     <Pressable
@@ -242,16 +324,21 @@ function EpisodeRow({
         styles.episode,
         watched && styles.episodeWatched,
         pressed && styles.pressed,
-      ]}>
+      ]}
+    >
       {image ? (
-        <Image source={{ uri: image }} style={styles.still} contentFit="cover" />
+        <Image
+          source={{ uri: image }}
+          style={styles.still}
+          contentFit="cover"
+        />
       ) : (
         <View style={[styles.still, styles.stillPlaceholder]} />
       )}
       <View style={styles.episodeContent}>
         <AppText variant="caption" muted>
           Episodio {episode.episode_number}
-          {episode.runtime ? ` · ${episode.runtime} min` : ''}
+          {episode.runtime ? ` · ${episode.runtime} min` : ""}
         </AppText>
         <AppText variant="label" numberOfLines={1}>
           {episode.name}
@@ -263,7 +350,7 @@ function EpisodeRow({
         ) : null}
       </View>
       <Ionicons
-        name={watched ? 'checkmark-circle' : 'ellipse-outline'}
+        name={watched ? "checkmark-circle" : "ellipse-outline"}
         size={25}
         color={watched ? colors.success : colors.textMuted}
       />
@@ -276,9 +363,9 @@ const styles = StyleSheet.create({
     gap: spacing.md,
   },
   headingRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
     gap: spacing.md,
   },
   headingText: {
@@ -292,10 +379,10 @@ const styles = StyleSheet.create({
     height: 5,
     borderRadius: radii.pill,
     backgroundColor: colors.surfaceElevated,
-    overflow: 'hidden',
+    overflow: "hidden",
   },
   progressBar: {
-    height: '100%',
+    height: "100%",
     backgroundColor: colors.primary,
   },
   seasonSelector: {
@@ -308,8 +395,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: colors.border,
     backgroundColor: colors.surface,
-    alignItems: 'center',
-    justifyContent: 'center',
+    alignItems: "center",
+    justifyContent: "center",
     paddingHorizontal: spacing.md,
   },
   seasonPillActive: {
@@ -318,7 +405,7 @@ const styles = StyleSheet.create({
   },
   seasonTextActive: {
     color: colors.black,
-    fontWeight: '800',
+    fontWeight: "800",
   },
   seasonAction: {
     minHeight: 46,
@@ -327,9 +414,9 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.surface,
     paddingHorizontal: spacing.lg,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'center',
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     gap: spacing.sm,
   },
   episodes: {
@@ -342,13 +429,13 @@ const styles = StyleSheet.create({
     borderColor: colors.border,
     backgroundColor: colors.surface,
     padding: spacing.sm,
-    flexDirection: 'row',
-    alignItems: 'center',
+    flexDirection: "row",
+    alignItems: "center",
     gap: spacing.md,
   },
   episodeWatched: {
     opacity: 0.72,
-    borderColor: 'rgba(16, 185, 129, 0.55)',
+    borderColor: "rgba(16, 185, 129, 0.55)",
   },
   still: {
     width: 112,

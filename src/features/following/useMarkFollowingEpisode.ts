@@ -1,6 +1,7 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 import { apiRequest } from "@/api/lumora/client";
+import { followingKey } from "@/features/following/followingQueries";
 import {
   emptyMediaState,
   mediaStateKey,
@@ -49,22 +50,22 @@ export function useMarkFollowingEpisode() {
       };
     },
     onMutate: async (item) => {
-      const followingKey = ["lumora", "following"] as const;
-      await queryClient.cancelQueries({ queryKey: followingKey });
-      const previous = queryClient.getQueryData<FollowingShow[]>(followingKey);
+      const queryKey = followingKey(userId);
+      await queryClient.cancelQueries({ queryKey });
+      const previous = queryClient.getQueryData<FollowingShow[]>(queryKey);
 
-      queryClient.setQueryData<FollowingShow[]>(followingKey, (current = []) =>
+      queryClient.setQueryData<FollowingShow[]>(queryKey, (current = []) =>
         current.filter((following) => following.show.id !== item.show.id),
       );
 
       return { previous };
     },
     onError: (_error, _item, context) => {
-      queryClient.setQueryData(["lumora", "following"], context?.previous);
+      queryClient.setQueryData(followingKey(userId), context?.previous);
     },
     onSuccess: ({ showId, nextEpisode, response }, _item, context) => {
       queryClient.setQueryData<FollowingShow[]>(
-        ["lumora", "following"],
+        followingKey(userId),
         (current = []) => {
           if (!nextEpisode) return current;
 

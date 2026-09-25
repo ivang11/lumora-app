@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'expo-router';
+import { Link, useFocusEffect } from 'expo-router';
+import { useCallback } from 'react';
 import {
   ActivityIndicator,
   FlatList,
@@ -9,27 +10,30 @@ import {
   useWindowDimensions,
 } from 'react-native';
 
-import { apiRequest } from '@/api/lumora/client';
 import { AppText } from '@/components/ui/AppText';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { FollowingEpisodeCard } from '@/features/following/FollowingEpisodeCard';
+import { followingQueryOptions } from '@/features/following/followingQueries';
 import { useMarkFollowingEpisode } from '@/features/following/useMarkFollowingEpisode';
 import { useAuthStore } from '@/stores/authStore';
 import { colors, radii, spacing } from '@/theme/tokens';
-import type { FollowingShow } from '@/types/media';
 
 export function FollowingScreen() {
   const token = useAuthStore((state) => state.token);
+  const userId = useAuthStore((state) => state.user?.id ?? null);
   const { width } = useWindowDimensions();
   const gap = spacing.md;
   const columns = Math.max(2, Math.floor((width - spacing.lg * 2 + gap) / 188));
   const cardWidth = (width - spacing.lg * 2 - gap * (columns - 1)) / columns;
-  const following = useQuery({
-    queryKey: ['lumora', 'following'],
-    queryFn: () => apiRequest<FollowingShow[]>('/following-shows', { token }),
-    enabled: Boolean(token),
-  });
+  const following = useQuery(followingQueryOptions(token, userId));
+  const refetchFollowing = following.refetch;
   const markWatched = useMarkFollowingEpisode();
+
+  useFocusEffect(
+    useCallback(() => {
+      if (token) void refetchFollowing();
+    }, [refetchFollowing, token]),
+  );
 
   if (!token) {
     return (

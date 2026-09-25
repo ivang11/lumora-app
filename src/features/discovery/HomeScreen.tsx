@@ -1,5 +1,6 @@
 import { useQueries, useQuery } from '@tanstack/react-query';
-import { Link } from 'expo-router';
+import { Link, useFocusEffect } from 'expo-router';
+import { useCallback } from 'react';
 import {
   FlatList,
   RefreshControl,
@@ -8,13 +9,13 @@ import {
   View,
 } from 'react-native';
 
-import { apiRequest } from '@/api/lumora/client';
 import { tmdbMediaApi } from '@/api/tmdb/media';
 import { PosterCard } from '@/components/media/PosterCard';
 import { AppText } from '@/components/ui/AppText';
 import { ErrorState } from '@/components/ui/ErrorState';
 import { hasTmdbConfiguration } from '@/config/env';
 import { FollowingEpisodeCard } from '@/features/following/FollowingEpisodeCard';
+import { followingQueryOptions } from '@/features/following/followingQueries';
 import { useMarkFollowingEpisode } from '@/features/following/useMarkFollowingEpisode';
 import { useAuthStore } from '@/stores/authStore';
 import { colors, spacing } from '@/theme/tokens';
@@ -108,6 +109,7 @@ function MediaRow({
 
 export function HomeScreen() {
   const token = useAuthStore((state) => state.token);
+  const userId = useAuthStore((state) => state.user?.id ?? null);
   const trendingMovies = useQuery({
     queryKey: ['tmdb', 'movie', 'trending'],
     queryFn: () => tmdbMediaApi.category('movie', 'trending'),
@@ -167,11 +169,14 @@ export function HomeScreen() {
       staleTime: 30 * 60_000,
     })),
   });
-  const following = useQuery({
-    queryKey: ['lumora', 'following'],
-    queryFn: () => apiRequest<FollowingShow[]>('/following-shows', { token }),
-    enabled: Boolean(token),
-  });
+  const following = useQuery(followingQueryOptions(token, userId));
+  const refetchFollowing = following.refetch;
+
+  useFocusEffect(
+    useCallback(() => {
+      if (token) void refetchFollowing();
+    }, [refetchFollowing, token]),
+  );
 
   const catalogQueries = [
     trendingMovies,

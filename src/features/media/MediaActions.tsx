@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { apiRequest } from "@/api/lumora/client";
 import { AppText } from "@/components/ui/AppText";
+import { followingKey } from "@/features/following/followingQueries";
 import {
   emptyMediaState,
   mediaStateKey,
@@ -83,7 +84,7 @@ export function MediaActions({ id, type }: MediaActionsProps) {
 
   const refreshCollections = () => {
     void queryClient.invalidateQueries({ queryKey: ["lumora", "collection"] });
-    void queryClient.invalidateQueries({ queryKey: ["lumora", "following"] });
+    void queryClient.invalidateQueries({ queryKey: followingKey(userId) });
     void queryClient.invalidateQueries({
       queryKey: ["lumora", "user", "stats"],
     });

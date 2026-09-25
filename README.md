@@ -35,10 +35,29 @@ npm start
 The following commands are also available:
 
 ```bash
+# iOS Simulator (default)
 npm run ios
+
+# Physical iPhone for development (requires Metro)
+npm run ios -- --device
+
+# Standalone build on a physical iPhone (works without Metro)
+npm run ios -- --device --configuration Release
+
+# Android emulator or connected device
 npm run android
+
+# Web browser
 npm run web
 ```
+
+To run the app on a physical iPhone, unlock the device, trust the Mac, and
+enable Developer Mode. The `--device` command lets you select the connected
+iPhone, then builds, signs, installs, and launches the app on it. Debug builds
+require Metro to remain available. Release builds include the JavaScript bundle
+and can run without the Mac or development server. Apps signed with a free
+Apple Personal Team expire after seven days and must then be rebuilt and
+reinstalled.
 
 ## Validation
 

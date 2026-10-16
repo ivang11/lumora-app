@@ -8,6 +8,7 @@ import {
 import {
   ActivityIndicator,
   FlatList,
+  Keyboard,
   Pressable,
   StyleSheet,
   TextInput,
@@ -72,7 +73,7 @@ export function SearchScreen() {
       : allResults.filter((item) => item.media_type === filter);
 
   return (
-    <View style={styles.container}>
+    <Pressable style={styles.container} onPress={Keyboard.dismiss} accessible={false}>
       <View style={styles.header}>
         <AppText variant="title">Buscar</AppText>
         <View style={styles.inputContainer}>
@@ -113,7 +114,10 @@ export function SearchScreen() {
                 key={item.type}
                 accessibilityRole="button"
                 accessibilityState={{ selected: active }}
-                onPress={() => setFilter(item.type)}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setFilter(item.type);
+                }}
                 style={[styles.filter, active && styles.filterActive]}>
                 <AppText
                   variant="caption"
@@ -136,7 +140,10 @@ export function SearchScreen() {
             {(suggestions.data?.slice(0, 6) ?? fallbackSuggestions).map((title) => (
               <Pressable
                 key={title}
-                onPress={() => setSearch(title)}
+                onPress={() => {
+                  Keyboard.dismiss();
+                  setSearch(title);
+                }}
                 style={({ pressed }) => [
                   styles.suggestion,
                   pressed && styles.suggestionPressed,
@@ -175,6 +182,7 @@ export function SearchScreen() {
           contentContainerStyle={styles.results}
           keyboardDismissMode="on-drag"
           keyboardShouldPersistTaps="handled"
+          onTouchStart={Keyboard.dismiss}
           onEndReached={() => {
             if (results.hasNextPage && !results.isFetchingNextPage) {
               void results.fetchNextPage();
@@ -193,7 +201,7 @@ export function SearchScreen() {
           }
         />
       )}
-    </View>
+    </Pressable>
   );
 }
 

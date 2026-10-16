@@ -1,8 +1,6 @@
 import { Ionicons } from '@expo/vector-icons';
 import { useInfiniteQuery, useQuery } from '@tanstack/react-query';
-import { useFocusEffect } from 'expo-router';
 import {
-  useCallback,
   useDeferredValue,
   useRef,
   useState,
@@ -73,13 +71,6 @@ export function SearchScreen() {
       ? allResults
       : allResults.filter((item) => item.media_type === filter);
 
-  useFocusEffect(
-    useCallback(() => {
-      const focusTimer = setTimeout(() => inputRef.current?.focus(), 120);
-      return () => clearTimeout(focusTimer);
-    }, []),
-  );
-
   return (
     <View style={styles.container}>
       <View style={styles.header}>
@@ -88,7 +79,6 @@ export function SearchScreen() {
           <TextInput
             ref={inputRef}
             accessibilityLabel="Buscar películas, series o personas"
-            autoFocus
             autoCapitalize="none"
             autoCorrect={false}
             placeholder="Películas, series o personas"
